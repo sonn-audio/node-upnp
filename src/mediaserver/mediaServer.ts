@@ -46,16 +46,40 @@ export interface BrowseResult {
   total?: number;
 }
 
+export interface SearchRequest {
+  /** Container to search within; ROOT_OBJECT_ID means "the whole server". */
+  containerId: string;
+  /** The raw UPnP SearchCriteria expression (parse with {@link parseSearchCriteria}). */
+  searchCriteria: string;
+  startingIndex: number;
+  requestedCount: number;
+  filter?: string;
+  sortCriteria?: string;
+}
+
 /**
- * The host's content backend. The MediaServer answers UPnP Browse by delegating
- * to this — the host maps its own catalogue onto neutral DIDL shapes, so the
- * module never depends on the app's content model.
+ * The host's content backend. The MediaServer answers UPnP Browse (and, when
+ * implemented, Search) by delegating to this — the host maps its own catalogue
+ * onto neutral DIDL shapes, so the module never depends on the app's content
+ * model.
  */
 export interface ContentProvider {
   /** BrowseDirectChildren of a container (ROOT_OBJECT_ID for the top level). */
   browse(objectId: string, startingIndex: number, requestedCount: number): Promise<BrowseResult>;
   /** BrowseMetadata of a single object (optional; return null if unsupported). */
   browseMetadata?(objectId: string): Promise<DidlContainer | DidlItem | null>;
+  /**
+   * Search within a container. Optional: when omitted the server advertises empty
+   * SearchCapabilities (the spec signal that tells control points not to search).
+   * The host parses `searchCriteria` (see {@link parseSearchCriteria}) and returns
+   * matching objects as neutral DIDL shapes.
+   */
+  search?(
+    containerId: string,
+    searchCriteria: string,
+    startingIndex: number,
+    requestedCount: number,
+  ): Promise<BrowseResult>;
 }
 
 export interface UpnpMediaServerOptions {
@@ -65,6 +89,12 @@ export interface UpnpMediaServerOptions {
   provider: ContentProvider;
   /** ConnectionManager source protocolInfo (what this server serves). */
   sourceProtocolInfo?: string;
+  /**
+   * The searchable properties advertised in GetSearchCapabilities, e.g.
+   * `'dc:title,upnp:artist,upnp:album'` or `'*'`. Only advertised when the
+   * provider implements `search()`; omit for no search.
+   */
+  searchCapabilities?: string;
   identity?: Partial<DeviceIdentity>;
   logger?: UpnpLogger;
 }
@@ -176,7 +206,7 @@ export class UpnpMediaServer {
       }
       try {
         const result = await this.browse(parsed);
-        return this.sendSoapRaw(res, this.buildBrowseResponse(result));
+        return this.sendSoapRaw(res, this.buildDirectoryResponse('Browse', result));
       } catch (error) {
         this.log?.warn?.('browse failed', {
           message: error instanceof Error ? error.message : String(error),
@@ -184,11 +214,32 @@ export class UpnpMediaServer {
         return this.sendSoapRaw(res, buildSoapFault('Browse failed'), 500);
       }
     }
+    if (action === 'Search' || /<[\w:]*Search[\s>]/.test(body)) {
+      if (!this.opts.provider.search) {
+        return this.sendSoapRaw(res, buildSoapFault('Search not supported'), 500);
+      }
+      const parsed = this.parseSearch(body);
+      if (!parsed) {
+        return this.sendSoapRaw(res, buildSoapFault('Invalid Search request'), 500);
+      }
+      try {
+        const result = await this.search(parsed);
+        return this.sendSoapRaw(res, this.buildDirectoryResponse('Search', result));
+      } catch (error) {
+        this.log?.warn?.('search failed', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return this.sendSoapRaw(res, buildSoapFault('Search failed'), 500);
+      }
+    }
     if (/GetSystemUpdateID/.test(action) || /GetSystemUpdateID/.test(body)) {
       return this.sendSoap(res, CDS_NS, 'GetSystemUpdateID', { Id: '1' });
     }
     if (/GetSearchCapabilities/.test(action) || /GetSearchCapabilities/.test(body)) {
-      return this.sendSoap(res, CDS_NS, 'GetSearchCapabilities', { SearchCaps: '' });
+      // Only advertise capabilities when the provider can actually search; empty
+      // is the spec signal that tells control points not to issue Search.
+      const caps = this.opts.provider.search ? this.opts.searchCapabilities ?? '' : '';
+      return this.sendSoap(res, CDS_NS, 'GetSearchCapabilities', { SearchCaps: caps });
     }
     if (/GetSortCapabilities/.test(action) || /GetSortCapabilities/.test(body)) {
       return this.sendSoap(res, CDS_NS, 'GetSortCapabilities', { SortCaps: '' });
@@ -207,6 +258,31 @@ export class UpnpMediaServer {
     const startingIndex = toInt(extractTag(body, 'StartingIndex'), 0);
     const requestedCount = toInt(extractTag(body, 'RequestedCount'), 0);
     return { objectId, browseFlag, startingIndex, requestedCount };
+  }
+
+  private parseSearch(body: string): SearchRequest | null {
+    if (!/<[\w:]*Search[\s>]/.test(body)) {
+      return null;
+    }
+    const containerId = extractTag(body, 'ContainerID') ?? ROOT_OBJECT_ID;
+    const searchCriteria = extractTag(body, 'SearchCriteria') ?? '';
+    const startingIndex = toInt(extractTag(body, 'StartingIndex'), 0);
+    const requestedCount = toInt(extractTag(body, 'RequestedCount'), 0);
+    return { containerId, searchCriteria, startingIndex, requestedCount };
+  }
+
+  private async search(req: SearchRequest): Promise<{ didl: string; numberReturned: number; totalMatches: number }> {
+    // RequestedCount 0 means "all" in UPnP; cap to a sane page.
+    const limit = req.requestedCount > 0 ? req.requestedCount : 200;
+    const offset = req.startingIndex > 0 ? req.startingIndex : 0;
+    const result = await this.opts.provider.search!(req.containerId, req.searchCriteria, offset, limit);
+    const elements = result.objects.map((o) =>
+      isItem(o) ? buildItemElement(o) : buildContainerElement(o),
+    );
+    const total = typeof result.total === 'number' && result.total > 0
+      ? result.total
+      : offset + elements.length;
+    return { didl: wrapDidl(elements), numberReturned: elements.length, totalMatches: total };
   }
 
   private async browse(req: BrowseRequest): Promise<{ didl: string; numberReturned: number; totalMatches: number }> {
@@ -233,7 +309,9 @@ export class UpnpMediaServer {
     return { didl: wrapDidl(elements), numberReturned: elements.length, totalMatches: total };
   }
 
-  private buildBrowseResponse(
+  /** Build a Browse/Search SOAP response (identical shape, different action name). */
+  private buildDirectoryResponse(
+    action: 'Browse' | 'Search',
     result: { didl: string; numberReturned: number; totalMatches: number },
     updateId = 0,
   ): string {
@@ -243,12 +321,12 @@ export class UpnpMediaServer {
       '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" ' +
       's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">' +
       '<s:Body>' +
-      `<u:BrowseResponse xmlns:u="${CDS_NS}">` +
+      `<u:${action}Response xmlns:u="${CDS_NS}">` +
       `<Result>${escapedDidl}</Result>` +
       `<NumberReturned>${result.numberReturned}</NumberReturned>` +
       `<TotalMatches>${result.totalMatches}</TotalMatches>` +
       `<UpdateID>${updateId}</UpdateID>` +
-      '</u:BrowseResponse>' +
+      `</u:${action}Response>` +
       '</s:Body></s:Envelope>'
     );
   }
@@ -297,6 +375,71 @@ export class UpnpMediaServer {
  * containers should set `upnpClass` to a `object.container.*` value (the default
  * in {@link buildContainerElement}) so this stays unambiguous.
  */
+/** A parsed UPnP SearchCriteria expression, in the shape a provider needs. */
+export interface ParsedSearchCriteria {
+  /** Free-text search terms extracted from the criteria (deduped). */
+  terms: string[];
+  /** Restrict to only playable items or only browsable containers, if the criteria says so. */
+  classFilter: 'item' | 'container' | null;
+  /** True when the criteria is the wildcard `*` (match everything). */
+  matchAll: boolean;
+}
+
+/**
+ * Parse a UPnP `SearchCriteria` expression into a host-friendly shape. The full
+ * grammar is a boolean expression over properties; in practice control points send
+ * a small set of shapes, so this extracts what a content backend actually needs:
+ * the free-text term(s) from `contains`/`=` clauses on text properties, and a
+ * coarse item-vs-container class restriction from `upnp:class derivedfrom "…"`.
+ *
+ * Examples it handles:
+ *   `dc:title contains "beatles"`
+ *   `(upnp:class derivedfrom "object.item.audioItem") and (dc:title contains "x")`
+ *   `upnp:artist contains "foo" or dc:title contains "foo"`
+ *   `*`  → matchAll
+ */
+export function parseSearchCriteria(criteria: string): ParsedSearchCriteria {
+  const raw = (criteria ?? '').trim();
+  if (raw === '' || raw === '*') {
+    return { terms: [], classFilter: null, matchAll: raw === '*' };
+  }
+  // Coarse class restriction from upnp:class derivedfrom / = "object.item…|object.container…".
+  const classes = [...raw.matchAll(/upnp:class\s+(?:derivedfrom|=)\s+"([^"]+)"/gi)].map(
+    (m) => (m[1] ?? '').toLowerCase(),
+  );
+  const wantsItem = classes.some((c) => c.startsWith('object.item'));
+  const wantsContainer = classes.some((c) => c.startsWith('object.container'));
+  let classFilter: 'item' | 'container' | null = null;
+  if (wantsItem && !wantsContainer) {
+    classFilter = 'item';
+  } else if (wantsContainer && !wantsItem) {
+    classFilter = 'container';
+  }
+  // Free-text terms from contains/= on the common text properties.
+  const terms: string[] = [];
+  const add = (term: string): void => {
+    const t = term.trim();
+    if (t && !terms.some((x) => x.toLowerCase() === t.toLowerCase())) {
+      terms.push(t);
+    }
+  };
+  const re = /(?:dc:title|upnp:artist|upnp:album|dc:creator|upnp:genre)\s+(?:contains|=)\s+"([^"]*)"/gi;
+  for (const m of raw.matchAll(re)) {
+    add(m[1] ?? '');
+  }
+  // Fallback: first quoted value that isn't a upnp:class token.
+  if (terms.length === 0) {
+    for (const m of raw.matchAll(/"([^"]+)"/g)) {
+      const v = (m[1] ?? '').trim();
+      if (v && !v.toLowerCase().startsWith('object.')) {
+        add(v);
+        break;
+      }
+    }
+  }
+  return { terms, classFilter, matchAll: false };
+}
+
 function isItem(o: DidlContainer | DidlItem): o is DidlItem {
   const cls = (o.upnpClass ?? '').toLowerCase();
   if (cls.startsWith('object.container')) {

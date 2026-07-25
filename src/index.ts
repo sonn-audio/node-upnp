@@ -33,13 +33,20 @@ export type {
   TransportState,
 } from './renderer/mediaRenderer.js';
 
-export { UpnpMediaServer, ROOT_OBJECT_ID, MEDIA_SERVER_PATHS } from './mediaserver/mediaServer.js';
+export {
+  UpnpMediaServer,
+  ROOT_OBJECT_ID,
+  MEDIA_SERVER_PATHS,
+  parseSearchCriteria,
+} from './mediaserver/mediaServer.js';
 export type {
   ContentProvider,
   UpnpMediaServerOptions,
   BrowseRequest,
   BrowseResult,
   BrowseFlag,
+  SearchRequest,
+  ParsedSearchCriteria,
 } from './mediaserver/mediaServer.js';
 
 export { DlnaControlPoint } from './controlpoint/controlPoint.js';

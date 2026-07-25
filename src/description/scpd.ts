@@ -9,9 +9,12 @@
  */
 
 /**
- * ContentDirectory:1 SCPD. Declares the actions a control point may invoke. We
- * implement Browse (the essential one) plus the required GetSystemUpdateID and
- * GetSearchCapabilities/GetSortCapabilities stubs.
+ * ContentDirectory:1 SCPD. Declares the actions a control point may invoke:
+ * Browse (the essential one) and Search, plus the required GetSystemUpdateID and
+ * GetSearchCapabilities/GetSortCapabilities. Search is only actually answered
+ * when the host's ContentProvider implements `search()`; otherwise
+ * GetSearchCapabilities returns empty, which is the spec signal that tells a
+ * control point not to issue Search.
  */
 export const CONTENT_DIRECTORY_SCPD = `<?xml version="1.0" encoding="utf-8"?>
 <scpd xmlns="urn:schemas-upnp-org:service-1-0">
@@ -24,6 +27,31 @@ export const CONTENT_DIRECTORY_SCPD = `<?xml version="1.0" encoding="utf-8"?>
           <relatedStateVariable>A_ARG_TYPE_ObjectID</relatedStateVariable></argument>
         <argument><name>BrowseFlag</name><direction>in</direction>
           <relatedStateVariable>A_ARG_TYPE_BrowseFlag</relatedStateVariable></argument>
+        <argument><name>Filter</name><direction>in</direction>
+          <relatedStateVariable>A_ARG_TYPE_Filter</relatedStateVariable></argument>
+        <argument><name>StartingIndex</name><direction>in</direction>
+          <relatedStateVariable>A_ARG_TYPE_Index</relatedStateVariable></argument>
+        <argument><name>RequestedCount</name><direction>in</direction>
+          <relatedStateVariable>A_ARG_TYPE_Count</relatedStateVariable></argument>
+        <argument><name>SortCriteria</name><direction>in</direction>
+          <relatedStateVariable>A_ARG_TYPE_SortCriteria</relatedStateVariable></argument>
+        <argument><name>Result</name><direction>out</direction>
+          <relatedStateVariable>A_ARG_TYPE_Result</relatedStateVariable></argument>
+        <argument><name>NumberReturned</name><direction>out</direction>
+          <relatedStateVariable>A_ARG_TYPE_Count</relatedStateVariable></argument>
+        <argument><name>TotalMatches</name><direction>out</direction>
+          <relatedStateVariable>A_ARG_TYPE_Count</relatedStateVariable></argument>
+        <argument><name>UpdateID</name><direction>out</direction>
+          <relatedStateVariable>A_ARG_TYPE_UpdateID</relatedStateVariable></argument>
+      </argumentList>
+    </action>
+    <action>
+      <name>Search</name>
+      <argumentList>
+        <argument><name>ContainerID</name><direction>in</direction>
+          <relatedStateVariable>A_ARG_TYPE_ObjectID</relatedStateVariable></argument>
+        <argument><name>SearchCriteria</name><direction>in</direction>
+          <relatedStateVariable>A_ARG_TYPE_SearchCriteria</relatedStateVariable></argument>
         <argument><name>Filter</name><direction>in</direction>
           <relatedStateVariable>A_ARG_TYPE_Filter</relatedStateVariable></argument>
         <argument><name>StartingIndex</name><direction>in</direction>
@@ -72,6 +100,7 @@ export const CONTENT_DIRECTORY_SCPD = `<?xml version="1.0" encoding="utf-8"?>
     </stateVariable>
     <stateVariable sendEvents="no"><name>A_ARG_TYPE_Filter</name><dataType>string</dataType></stateVariable>
     <stateVariable sendEvents="no"><name>A_ARG_TYPE_SortCriteria</name><dataType>string</dataType></stateVariable>
+    <stateVariable sendEvents="no"><name>A_ARG_TYPE_SearchCriteria</name><dataType>string</dataType></stateVariable>
     <stateVariable sendEvents="no"><name>A_ARG_TYPE_Index</name><dataType>ui4</dataType></stateVariable>
     <stateVariable sendEvents="no"><name>A_ARG_TYPE_Count</name><dataType>ui4</dataType></stateVariable>
     <stateVariable sendEvents="no"><name>A_ARG_TYPE_UpdateID</name><dataType>ui4</dataType></stateVariable>

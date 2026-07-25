@@ -78,11 +78,46 @@ await ssdp.start();
 interface ContentProvider {
   browse(objectId: string, offset: number, limit: number): Promise<BrowseResult>;
   browseMetadata?(objectId: string): Promise<DidlContainer | DidlItem | null>;
+  // Optional — enables UPnP Search (a control point's search box):
+  search?(containerId: string, searchCriteria: string,
+          offset: number, limit: number): Promise<BrowseResult>;
 }
 ```
 
 Return `DidlContainer` for browsable folders, `DidlItem` (with `resources`) for
 playable tracks. The module builds and escapes the DIDL-Lite for you.
+
+### Search (optional)
+
+Implement `search()` and pass `searchCapabilities` to advertise a search box to
+control points. The module answers the UPnP `Search` action; you turn the raw
+`searchCriteria` into a query with `parseSearchCriteria`:
+
+```ts
+import { parseSearchCriteria } from '@sonn-audio/node-upnp';
+
+const provider = {
+  /* …browse… */
+  async search(containerId, searchCriteria, offset, limit) {
+    const { terms, classFilter } = parseSearchCriteria(searchCriteria);
+    if (!terms.length) return { objects: [], total: 0 };   // don't dump on `*`
+    const hits = await myBackend.search(terms.join(' '));
+    return { objects: hits.map(toDidl), total: hits.length };
+  },
+};
+
+new UpnpMediaServer({
+  /* …udn, friendlyName, baseUrl… */
+  provider,
+  searchCapabilities: 'dc:title,upnp:artist,upnp:album',
+});
+```
+
+`parseSearchCriteria` extracts the free-text `terms` from the criteria's
+`contains`/`=` clauses and a coarse `classFilter` (`'item'` | `'container'` |
+`null`) from any `upnp:class derivedfrom "…"` restriction. When the provider has
+no `search()`, `GetSearchCapabilities` returns empty — the spec signal that stops
+control points from issuing Search.
 
 ## Be a MediaRenderer
 
