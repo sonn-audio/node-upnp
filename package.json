@@ -1,0 +1,48 @@
+{
+  "name": "@sonn-audio/node-upnp",
+  "version": "0.1.0",
+  "description": "UPnP AV toolkit: SSDP, SOAP, DIDL-Lite, GENA, plus a MediaRenderer server, a control-point client, and a MediaServer framework. Protocol only — inject your own content and playback.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sonn-audio/node-upnp.git"
+  },
+  "keywords": [
+    "upnp",
+    "dlna",
+    "ssdp",
+    "mediaserver",
+    "mediarenderer",
+    "didl-lite",
+    "soap",
+    "gena"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "npm run build:cjs && npm run build:esm",
+    "build:cjs": "tsc -p tsconfig.json",
+    "build:esm": "tsc -p tsconfig.esm.json && node -e \"const fs=require('fs');fs.mkdirSync('dist/esm',{recursive:true});fs.writeFileSync('dist/esm/package.json','{\\\"type\\\":\\\"module\\\"}\\n');\"",
+    "clean": "rimraf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepare": "npm run build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.19.3",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.9.3"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/esm/index.js",
+      "default": "./dist/index.js"
+    }
+  }
+}
