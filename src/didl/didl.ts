@@ -30,6 +30,16 @@ export interface DidlContainer {
   childCount?: number;
   /** Optional absolute icon/art URL shown as the folder tile. */
   albumArtUri?: string;
+  /**
+   * Performer, for containers that have one — an album or artist container. Emitted
+   * as `upnp:artist`, and as `dc:creator` unless {@link creator} overrides it.
+   * Controllers use it to label and group album tiles.
+   */
+  artist?: string;
+  /** `dc:creator`; falls back to {@link artist} when omitted. */
+  creator?: string;
+  /** Emitted as `upnp:genre` when present. */
+  genre?: string;
 }
 
 /** A `<res>` resource on a playable item. */
@@ -80,17 +90,29 @@ export interface ParsedDidlObject {
 export function buildContainerElement(container: DidlContainer): string {
   const childCountAttr =
     typeof container.childCount === 'number' ? ` childCount="${container.childCount}"` : '';
-  const art = container.albumArtUri
-    ? `<upnp:albumArtURI>${escapeXml(container.albumArtUri)}</upnp:albumArtURI>`
-    : '';
-  return (
+  const parts: string[] = [
     `<container id="${escapeXml(container.id)}" parentID="${escapeXml(container.parentId)}" ` +
-    `restricted="1"${childCountAttr}>` +
-    `<dc:title>${escapeXml(container.title)}</dc:title>` +
-    art +
-    `<upnp:class>${escapeXml(container.upnpClass ?? 'object.container.storageFolder')}</upnp:class>` +
-    '</container>'
+      `restricted="1"${childCountAttr}>`,
+    `<dc:title>${escapeXml(container.title)}</dc:title>`,
+  ];
+  const creator = container.creator ?? container.artist;
+  if (creator) {
+    parts.push(`<dc:creator>${escapeXml(creator)}</dc:creator>`);
+  }
+  if (container.artist) {
+    parts.push(`<upnp:artist>${escapeXml(container.artist)}</upnp:artist>`);
+  }
+  if (container.genre) {
+    parts.push(`<upnp:genre>${escapeXml(container.genre)}</upnp:genre>`);
+  }
+  if (container.albumArtUri) {
+    parts.push(`<upnp:albumArtURI>${escapeXml(container.albumArtUri)}</upnp:albumArtURI>`);
+  }
+  parts.push(
+    `<upnp:class>${escapeXml(container.upnpClass ?? 'object.container.storageFolder')}</upnp:class>`,
+    '</container>',
   );
+  return parts.join('');
 }
 
 export function buildItemElement(item: DidlItem): string {
