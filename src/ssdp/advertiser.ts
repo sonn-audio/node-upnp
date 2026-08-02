@@ -82,12 +82,23 @@ export class SsdpAdvertiser {
     this.socket = socket;
 
     socket.on('message', (msg, rinfo) => this.handleMessage(msg, rinfo));
-    socket.on('error', (error) => {
-      this.log?.warn?.('ssdp socket error', { message: error.message });
-    });
 
-    await new Promise<void>((resolve) => {
+    // Binding :1900 can fail — most often EADDRINUSE when another UPnP/DLNA
+    // process on the host already holds the port. dgram reports that as an
+    // 'error' event, NOT through the bind callback, so waiting only on the
+    // callback would never settle and hang start() forever. SSDP presence is
+    // best-effort: a failed bind must resolve (never hang, never throw) with the
+    // advertiser left disabled, so the caller's startup carries on without UPnP.
+    const bound = await new Promise<boolean>((resolve) => {
+      const onBindError = (error: Error): void => {
+        this.log?.warn?.('ssdp bind failed; advertiser disabled', {
+          message: error.message,
+        });
+        resolve(false);
+      };
+      socket.once('error', onBindError);
       socket.bind(SSDP_PORT, () => {
+        socket.removeListener('error', onBindError);
         try {
           socket.addMembership(SSDP_ADDRESS);
         } catch (error) {
@@ -95,8 +106,26 @@ export class SsdpAdvertiser {
             message: error instanceof Error ? error.message : String(error),
           });
         }
-        resolve();
+        resolve(true);
       });
+    });
+
+    if (!bound) {
+      // Swallow any further error from the dead socket while tearing it down.
+      socket.on('error', () => {});
+      this.running = false;
+      this.socket = undefined;
+      try {
+        socket.close();
+      } catch {
+        /* already unusable */
+      }
+      return;
+    }
+
+    // Steady-state errors after a successful bind: log and keep advertising.
+    socket.on('error', (error) => {
+      this.log?.warn?.('ssdp socket error', { message: error.message });
     });
 
     this.sendAlive();

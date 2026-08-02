@@ -1,6 +1,6 @@
 {
   "name": "@sonn-audio/node-upnp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "UPnP AV toolkit: SSDP, SOAP, DIDL-Lite, GENA, plus a MediaRenderer server, a control-point client, and a MediaServer framework. Protocol only — inject your own content and playback.",
   "license": "MIT",
   "repository": {
