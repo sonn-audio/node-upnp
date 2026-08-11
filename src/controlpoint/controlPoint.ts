@@ -56,6 +56,9 @@ export class DlnaControlPoint {
   private host: string;
   private controlUrl?: string;
   private renderingControlUrl?: string;
+  private connectionManagerUrl?: string;
+  /** Cached answer to GetProtocolInfo; the sink list is a property of the device, not of a session. */
+  private sinkContentTypes?: string[] | null;
   private discoveryPromise?: Promise<boolean>;
   private readonly autoDiscover: boolean;
   private readonly deviceName: string;
@@ -179,6 +182,67 @@ export class DlnaControlPoint {
       return false;
     }
     return this.enqueueResult(() => this.invokeAction('Stop', this.buildStopBody()));
+  }
+
+  /**
+   * The MIME types this renderer says it can play, from ConnectionManager::GetProtocolInfo's `Sink`.
+   *
+   * A UPnP renderer publishes what it accepts as protocolInfo entries — `http-get:*:audio/flac:*` —
+   * and asking is the only way to know whether a stream will play before sending it. A renderer that
+   * cannot decode what it is given does not complain; it plays silence.
+   *
+   * Returns `null` when the device has no ConnectionManager, does not answer, or answers with
+   * something unparseable — deliberately not an empty array, because "it told us nothing" and "it
+   * accepts nothing" must not read the same to a caller deciding what to send. Cached after the first
+   * answer.
+   */
+  public async getSinkContentTypes(): Promise<string[] | null> {
+    if (this.sinkContentTypes !== undefined) {
+      return this.sinkContentTypes;
+    }
+    if (!(await this.ensureEndpoints()) || !this.connectionManagerUrl) {
+      this.log?.debug?.('no ConnectionManager endpoint; sink formats unknown', { host: this.host });
+      return null;
+    }
+    const body =
+      '<?xml version="1.0" encoding="utf-8"?>' +
+      '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"' +
+      ' s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">' +
+      '<s:Body><u:GetProtocolInfo xmlns:u="urn:schemas-upnp-org:service:ConnectionManager:1"/></s:Body>' +
+      '</s:Envelope>';
+    const controller = new AbortController();
+    this.controllers.add(controller);
+    const timeout = setTimeout(() => controller.abort(), this.commandTimeoutMs);
+    timeout.unref();
+    try {
+      const response = await fetch(this.connectionManagerUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/xml; charset="utf-8"',
+          SOAPAction: '"urn:schemas-upnp-org:service:ConnectionManager:1#GetProtocolInfo"',
+        },
+        body,
+        signal: controller.signal,
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        this.log?.debug?.('GetProtocolInfo failed', { host: this.host, status: response.status });
+        return null;
+      }
+      const types = parseSinkContentTypes(text);
+      this.sinkContentTypes = types;
+      this.log?.info?.('renderer sink formats', { host: this.host, count: types?.length ?? 0, types });
+      return types;
+    } catch (err) {
+      this.log?.debug?.('GetProtocolInfo error', {
+        host: this.host,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    } finally {
+      clearTimeout(timeout);
+      this.controllers.delete(controller);
+    }
   }
 
   public async setVolume(percent: number): Promise<boolean> {
@@ -580,6 +644,9 @@ export class DlnaControlPoint {
     if (info.renderingControlEventUrl) {
       this.renderingControlEventUrl = info.renderingControlEventUrl;
     }
+    if (info.connectionManagerUrl) {
+      this.connectionManagerUrl = info.connectionManagerUrl;
+    }
     this.log?.info?.('DLNA discovery completed', {
       host: this.host,
       controlUrl: this.controlUrl,
@@ -610,4 +677,34 @@ export class DlnaControlPoint {
       renderingControlEventUrl: this.renderingControlEventUrl,
     });
   }
+}
+
+/**
+ * Pull the MIME types out of a GetProtocolInfo response's `Sink`.
+ *
+ * The list is comma-separated protocolInfo entries, each `protocol:network:mime:additional` — so the
+ * third colon-separated field is the format. Entries a renderer publishes for other protocols
+ * (rtsp-rtp-udp, internal) keep their own MIME field, which is why the whole field is taken rather
+ * than a substring match on the raw string: `audio/flac` must not be found inside
+ * `application/x-flac-container`.
+ */
+export function parseSinkContentTypes(soapResponse: string): string[] | null {
+  const sink = /<Sink>([\s\S]*?)<\/Sink>/i.exec(soapResponse)?.[1];
+  if (!sink) {
+    return null;
+  }
+  const decoded = sink
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"');
+  const types = new Set<string>();
+  for (const entry of decoded.split(',')) {
+    const fields = entry.trim().split(':');
+    const mime = fields[2]?.trim().toLowerCase();
+    if (mime && mime.includes('/')) {
+      types.add(mime);
+    }
+  }
+  return types.size ? [...types] : null;
 }

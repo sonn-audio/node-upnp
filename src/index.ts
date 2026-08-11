@@ -49,7 +49,7 @@ export type {
   ParsedSearchCriteria,
 } from './mediaserver/mediaServer.js';
 
-export { DlnaControlPoint } from './controlpoint/controlPoint.js';
+export { DlnaControlPoint, parseSinkContentTypes } from './controlpoint/controlPoint.js';
 export type { DlnaControlPointOptions } from './controlpoint/controlPoint.js';
 
 // ── Control-point discovery ─────────────────────────────────────────────────────

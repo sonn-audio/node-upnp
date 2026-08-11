@@ -10,6 +10,12 @@ export interface DlnaEndpointInfo {
   avTransportEventUrl?: string;
   /** GENA event subscription endpoint for RenderingControl (volume / mute). */
   renderingControlEventUrl?: string;
+  /**
+   * ConnectionManager control endpoint. This is where a renderer publishes the formats it accepts
+   * (`GetProtocolInfo` → `Sink`), which is the only way to know whether a stream will play before
+   * sending it.
+   */
+  connectionManagerUrl?: string;
   friendlyName?: string;
   descriptionUrl?: string;
 }
@@ -347,12 +353,14 @@ function parseDeviceDescription(xml: string, location: string): DlnaEndpointInfo
   };
   const avTransport = selectService(services, 'avtransport');
   const rendering = selectService(services, 'renderingcontrol');
+  const connectionManager = selectService(services, 'connectionmanager');
   return {
     friendlyName: extractTag(xml, 'friendlyName'),
     controlUrl: getUrl(avTransport?.controlUrl),
     renderingControlUrl: getUrl(rendering?.controlUrl),
     avTransportEventUrl: getUrl(avTransport?.eventSubUrl),
     renderingControlEventUrl: getUrl(rendering?.eventSubUrl),
+    connectionManagerUrl: getUrl(connectionManager?.controlUrl),
   };
 }
 
