@@ -328,7 +328,11 @@ export class UpnpMediaRenderer {
   private actSeek(res: ServerResponse, body: string): void {
     const unit = extractTag(body, 'Unit') ?? '';
     const target = extractTag(body, 'Target') ?? '';
-    if (unit === 'REL_TIME') {
+    // Both units are an H:MM:SS clock, and this renderer plays one track at a time — so the
+    // position relative to the track and the position on the media are the same number, which is
+    // also what GetPositionInfo reports for both. A control point that asks in ABS_TIME (some do)
+    // used to get an OK and no seek.
+    if (unit === 'REL_TIME' || unit === 'ABS_TIME') {
       const seconds = parseClock(target);
       if (seconds !== null && this.currentUri) {
         this.opts.handler.onSeek?.(seconds);
