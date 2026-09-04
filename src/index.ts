@@ -62,6 +62,7 @@ export type {
   DlnaEventKind,
   DlnaTransportEvent,
   DlnaRenderingEvent,
+  DlnaRawEvent,
   DlnaEventHandlers,
   DlnaEventSubscriberOptions,
 } from './gena/eventSubscriber.js';
@@ -109,6 +110,7 @@ export {
   buildSoapFault,
   extractFaultCode,
 } from './soap/soap.js';
+export type { BuildSoapRequestOptions } from './soap/soap.js';
 
 // ── ID3 (for server-side stream tagging) ────────────────────────────────────────
 export { buildId3v2Tag } from './media/id3.js';

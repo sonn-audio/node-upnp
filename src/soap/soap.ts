@@ -64,6 +64,16 @@ export function buildSoapResponse(
   );
 }
 
+export interface BuildSoapRequestOptions {
+  /**
+   * InstanceID to send as the first argument. AVTransport and RenderingControl
+   * actions all take one and it is virtually always 0, which is the default.
+   * Pass `null` for services that take no InstanceID at all — ZoneGroupTopology,
+   * DeviceProperties, ContentDirectory — since those reject the extra argument.
+   */
+  instanceId?: number | null;
+}
+
 /**
  * Build a SOAP action-request envelope. `args` values are inserted as-is, so a
  * caller passing DIDL metadata must pass it already XML-escaped (matching how
@@ -73,7 +83,10 @@ export function buildSoapRequest(
   serviceType: string,
   action: string,
   args: Record<string, string> = {},
+  options: BuildSoapRequestOptions = {},
 ): string {
+  const instanceId = options.instanceId === undefined ? 0 : options.instanceId;
+  const instanceArg = instanceId === null ? '' : `<InstanceID>${instanceId}</InstanceID>`;
   const body = Object.entries(args)
     .map(([k, v]) => `<${k}>${v}</${k}>`)
     .join('');
@@ -82,7 +95,7 @@ export function buildSoapRequest(
     '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" ' +
     's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">' +
     '<s:Body>' +
-    `<u:${action} xmlns:u="${serviceType}"><InstanceID>0</InstanceID>${body}</u:${action}>` +
+    `<u:${action} xmlns:u="${serviceType}">${instanceArg}${body}</u:${action}>` +
     '</s:Body></s:Envelope>'
   );
 }

@@ -16,7 +16,12 @@ import { UpnpLogger } from '../logger.js';
  * re-established on failure.
  */
 
-export type DlnaEventKind = 'avtransport' | 'renderingcontrol';
+/**
+ * Which service a NOTIFY came from. The two AV services are parsed into typed
+ * events; any other service name a caller subscribes to (Sonos's
+ * ZoneGroupTopology, say) is passed through untyped to {@link DlnaEventHandlers.onRaw}.
+ */
+export type DlnaEventKind = 'avtransport' | 'renderingcontrol' | (string & {});
 
 export interface DlnaTransportEvent {
   /** Raw UPnP TransportState, e.g. PLAYING / PAUSED_PLAYBACK / STOPPED / TRANSITIONING. */
@@ -32,9 +37,25 @@ export interface DlnaRenderingEvent {
   muted?: boolean;
 }
 
+/** Every NOTIFY, before (and regardless of) typed parsing. */
+export interface DlnaRawEvent {
+  /** Service the NOTIFY belongs to; undefined when the SID couldn't be mapped. */
+  kind?: DlnaEventKind;
+  /** The complete GENA property-set body. */
+  body: string;
+  /** The unescaped inner `LastChange` document, when the property set carries one. */
+  lastChange?: string;
+}
+
 export interface DlnaEventHandlers {
   onTransport?: (event: DlnaTransportEvent) => void;
   onRendering?: (event: DlnaRenderingEvent) => void;
+  /**
+   * Raw access to every NOTIFY. Fires for services with no typed parser at all,
+   * and lets a caller read state variables the typed events don't carry (Sonos
+   * keeps its track metadata in vendor-namespaced LastChange vars).
+   */
+  onRaw?: (event: DlnaRawEvent) => void;
 }
 
 export interface DlnaEventSubscriberOptions {
@@ -65,7 +86,7 @@ export class DlnaEventSubscriber {
   private readonly log?: UpnpLogger;
 
   constructor(
-    private readonly zoneId: number,
+    private readonly zoneId: number | string,
     private readonly localHost: string,
     private readonly handlers: DlnaEventHandlers,
     options: DlnaEventSubscriberOptions = {},
@@ -80,6 +101,11 @@ export class DlnaEventSubscriber {
   public async start(urls: {
     avTransportEventUrl?: string;
     renderingControlEventUrl?: string;
+    /**
+     * Further services to subscribe to, keyed by a caller-chosen kind. These get
+     * no typed parsing — they surface through {@link DlnaEventHandlers.onRaw}.
+     */
+    extraServices?: Array<{ kind: DlnaEventKind; eventUrl: string }>;
   }): Promise<void> {
     if (this.disposed) {
       return;
@@ -91,6 +117,7 @@ export class DlnaEventSubscriber {
     const targets: Array<{ kind: DlnaEventKind; url?: string }> = [
       { kind: 'avtransport', url: urls.avTransportEventUrl },
       { kind: 'renderingcontrol', url: urls.renderingControlEventUrl },
+      ...(urls.extraServices ?? []).map((s) => ({ kind: s.kind, url: s.eventUrl })),
     ];
     for (const { kind, url } of targets) {
       if (!url) {
@@ -208,20 +235,29 @@ export class DlnaEventSubscriber {
   }
 
   private dispatchNotify(kind: DlnaEventKind | undefined, body: string): void {
-    const lastChange = extractLastChange(body);
+    const lastChange = extractLastChange(body) ?? undefined;
+    // Infer the service from the payload when the SID couldn't be mapped (e.g. after a
+    // renew). Only ever guesses between the two typed services — a caller's own service
+    // is identified by its SID or not at all.
+    const resolvedKind =
+      kind ??
+      (lastChange
+        ? /TransportState|CurrentTrackURI/i.test(lastChange)
+          ? 'avtransport'
+          : 'renderingcontrol'
+        : undefined);
+    // Raw first, and unconditionally: some services (ZoneGroupTopology) put their state
+    // straight in the property set rather than in a LastChange document.
+    this.handlers.onRaw?.({ kind: resolvedKind, body, lastChange });
     if (!lastChange) {
       return;
     }
-    // If we couldn't map the SID (e.g. renewed), infer the service from the payload contents.
-    const resolvedKind =
-      kind ??
-      (/TransportState|CurrentTrackURI/i.test(lastChange) ? 'avtransport' : 'renderingcontrol');
     if (resolvedKind === 'avtransport') {
       const event = parseTransportLastChange(lastChange);
       if (event && (event.transportState || event.currentTrackUri || event.durationSeconds != null)) {
         this.handlers.onTransport?.(event);
       }
-    } else {
+    } else if (resolvedKind === 'renderingcontrol') {
       const event = parseRenderingLastChange(lastChange);
       if (event && (event.volume != null || event.muted != null)) {
         this.handlers.onRendering?.(event);
