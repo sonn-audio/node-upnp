@@ -184,9 +184,17 @@ function unescape(value: string): string {
 /** Read a single DIDL text field from a (possibly SOAP-escaped) metadata blob. */
 export function readDidlField(metadata: string, tag: string): string {
   const didl = unescape(metadata);
-  const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, 'i');
-  const m = re.exec(didl);
+  const m = fieldRegex(tag).exec(didl);
   return m ? unescape(m[1] ?? '').trim() : '';
+}
+
+/**
+ * Match `<tag>` or `<tag attr="…">`, but never a longer tag that merely starts with
+ * the same letters — `upnp:album` must not match `<upnp:albumArtURI>`, which is the
+ * element Sonos happens to emit first.
+ */
+function fieldRegex(tag: string): RegExp {
+  return new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'i');
 }
 
 /** Read the res@duration attribute from a DIDL metadata blob. */
@@ -208,8 +216,7 @@ export function parseDidlObject(metadata: string): ParsedDidlObject | null {
     return null;
   }
   const field = (tag: string): string | undefined => {
-    const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, 'i');
-    const m = re.exec(didl);
+    const m = fieldRegex(tag).exec(didl);
     return m ? unescape(m[1] ?? '').trim() : undefined;
   };
   const idMatch = /<(?:item|container)[^>]*\bid="([^"]*)"/i.exec(didl);
